@@ -26,19 +26,45 @@ import os
 import re
 import smtplib
 import sys
+import time
 from datetime import date, timedelta
 from email.mime.text import MIMEText
+from urllib.parse import urlparse
 
 import requests
 import yaml
 from bs4 import BeautifulSoup
 
+# A fuller, more realistic browser header set. A bare User-Agent is one of
+# the first things bot-protection (Cloudflare/Akamai, which BookMyShow
+# uses) checks for - real browsers always send Accept, Accept-Language,
+# Accept-Encoding, sec-ch-ua, etc. alongside it.
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    )
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
 }
+
+# Reused across requests so cookies (incl. any Cloudflare clearance cookie)
+# persist between the warm-up request and the real one.
+_session = requests.Session()
+_session.headers.update(HEADERS)
 
 
 def load_config(path="config.yaml"):
@@ -48,10 +74,58 @@ def load_config(path="config.yaml"):
         return yaml.safe_load(f) or {}
 
 
-def fetch_page(url):
-    resp = requests.get(url, headers=HEADERS, timeout=20)
-    resp.raise_for_status()
-    return resp.text
+def fetch_page(url, retries=3):
+    """
+    Fetch a page like a real browser would:
+      1. Visit the site's homepage first (so cookies/session state exist
+         and the Referer on the next request is legitimate), then
+      2. Request the actual URL with that Referer set.
+    Retries with backoff on 403s, since bot-protection sometimes lets a
+    request through on a second/third try once cookies are set.
+    """
+    parsed = urlparse(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            if attempt == 1:
+                # Warm-up request: establishes cookies and is a normal
+                # thing for a real visitor to have done already.
+                _session.get(origin, timeout=20)
+
+            resp = _session.get(
+                url,
+                headers={"Referer": origin + "/"},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            return resp.text
+        except requests.HTTPError as e:
+            last_error = e
+            status = e.response.status_code if e.response is not None else None
+            if status == 403 and attempt < retries:
+                time.sleep(2 * attempt)  # back off and try again
+                continue
+            if status == 403:
+                break  # fall through to the RuntimeError below
+            raise
+        except requests.RequestException as e:
+            last_error = e
+            raise
+
+    # All retries exhausted on 403
+    raise RuntimeError(
+        f"Still getting 403 Forbidden after {retries} tries for {url}. "
+        "This means BookMyShow's bot-protection (Cloudflare/Akamai) is "
+        "blocking plain HTTP requests outright - it can detect that this "
+        "isn't a real browser regardless of headers. A plain `requests` "
+        "script generally cannot get past this. Options: (1) run this from "
+        "a residential/home IP rather than a cloud CI runner - GitHub "
+        "Actions IPs are commonly blocked outright, or (2) switch to a "
+        "headless-browser approach (e.g. Playwright) that actually renders "
+        "the page and passes the JS challenge. See README for details."
+    ) from last_error
 
 
 def extract_cinema_shows(html, keyword):
@@ -147,7 +221,7 @@ def check_one(cfg, name, url, keyword, send_email_on_new=True):
 
     try:
         html = fetch_page(url)
-    except requests.RequestException as e:
+    except (requests.RequestException, RuntimeError) as e:
         print(f"[{name}] Could not fetch the page: {e}")
         return
 
