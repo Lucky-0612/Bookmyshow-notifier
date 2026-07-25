@@ -26,6 +26,7 @@ import os
 import re
 import smtplib
 import sys
+from datetime import date, timedelta
 from email.mime.text import MIMEText
 
 import requests
@@ -181,6 +182,44 @@ def check_one(cfg, name, url, keyword, send_email_on_new=True):
     save_state(state_path, current)
 
 
+def expand_watch(w):
+    """
+    Turn one config 'watches' entry into a list of (name, url, keyword) to check.
+
+    Two supported entry shapes:
+    1) Plain, single-date entry:
+         - name: "..."
+           url: "https://.../20260805?..."
+           cinema_keyword: "Allu"
+       -> returns exactly that one (name, url, keyword)
+
+    2) Auto date-range entry (checks several upcoming dates automatically):
+         - name: "Spiderman - Allu Cinemas"
+           url_template: "https://in.bookmyshow.com/movies/hyderabad/spider-man-brand-new-day/buytickets/ET00502689/{date}"
+           cinema_keyword: "Allu"
+           date_range_days: 10       # how many days ahead to check, starting today
+       -> generates one (name, url, keyword) per day, with {date} replaced by
+          YYYYMMDD, and name suffixed with that date so each gets its own
+          saved state file.
+    """
+    keyword = w.get("cinema_keyword", "")
+
+    if "url_template" in w:
+        days = int(w.get("date_range_days", 7))
+        start = date.today()
+        out = []
+        for i in range(days):
+            d = start + timedelta(days=i)
+            date_str = d.strftime("%Y%m%d")
+            url = w["url_template"].replace("{date}", date_str)
+            name = f'{w["name"]} - {d.strftime("%d %b")}'
+            out.append((name, url, keyword))
+        return out
+
+    # plain single entry
+    return [(w["name"], w["url"], keyword)]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check BookMyShow listing pages for new showtimes.")
     parser.add_argument("--url", help="Ad-hoc listing page URL to check (overrides config watchlist)")
@@ -212,7 +251,8 @@ def main():
         return
 
     for w in watches:
-        check_one(cfg, w["name"], w["url"], w.get("cinema_keyword", ""))
+        for name, url, keyword in expand_watch(w):
+            check_one(cfg, name, url, keyword)
 
 
 if __name__ == "__main__":

@@ -1,19 +1,30 @@
 # ---- What to watch ----
-# Add one entry per movie+cinema you want tracked. Each gets its own saved
-# state file, so they don't interfere with each other.
+# Two ways to define a watch:
 #
-# - name: short label, used in the email subject and to name the state file
-# - url: the movie's LISTING page (not a /seat-layout/... page)
-# - cinema_keyword: substring to match a cinema's name (case-insensitive).
-#     Leave blank ("") to get notified about ANY new showtime on the page.
+# 1) Single fixed date/URL (old style, still supported):
+#    - name: "..."
+#      url: "https://.../buytickets/ET00XXXXXX/20260805?..."
+#      cinema_keyword: "Allu"
+#
+# 2) Auto date-range (recommended - covers dates that open up LATER too):
+#    - name: "..."
+#      url_template: "https://in.bookmyshow.com/movies/hyderabad/<movie-slug>/buytickets/ET00XXXXXX/{date}"
+#      cinema_keyword: "Allu"
+#      date_range_days: 10   # checks today + the next 9 days, every run
+#
+#    {date} gets replaced with YYYYMMDD for each day in the range. Each day
+#    gets its own saved state, so a date that's empty today and gets shows
+#    added tomorrow will correctly trigger a "new show" email.
+#
+# IMPORTANT: url_template must NOT include a real date or the ?etCodes=...
+# query params tied to one specific date - just the base buytickets URL up
+# to /{date}. Grab the exact slug/event-code (ET00...) from any date's real
+# URL, then replace only the trailing date segment with {date}.
 watches:
   - name: "Spiderman - Allu Cinemas"
-    url: "https://in.bookmyshow.com/movies/hyderabad/spider-man-brand-new-day/buytickets/ET00502689/20260805?etCodes=ET00502689&language=english&refEventCode=ET00502689"
+    url_template: "https://in.bookmyshow.com/movies/hyderabad/spider-man-brand-new-day/buytickets/ET00502689/{date}"
     cinema_keyword: "Allu"
-
-  # - name: "Jana Nayakudu - AMB Cinemas"
-  #   url: "https://in.bookmyshow.com/movies/hyd/jana-nayakudu/ET00430826"
-  #   cinema_keyword: "AMB"
+    date_range_days: 10
 
 # ---- Email ----
 # Do NOT put real credentials here - they're pulled from GitHub Secrets
