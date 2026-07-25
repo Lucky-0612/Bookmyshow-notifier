@@ -10,11 +10,12 @@
 #    - name: "..."
 #      url_template: "https://in.bookmyshow.com/movies/hyderabad/<movie-slug>/buytickets/ET00XXXXXX/{date}"
 #      cinema_keyword: "Allu"
-#      date_range_days: 10   # checks today + the next 9 days, every run
+#      date_range_days: 10    # checks this many days, starting from start_date
+#      start_date: "20260805" # optional YYYYMMDD - defaults to today if omitted
 #
 #    {date} gets replaced with YYYYMMDD for each day in the range. Each day
-#    gets its own saved state, so a date that's empty today and gets shows
-#    added tomorrow will correctly trigger a "new show" email.
+#    gets its own saved state, so a showtime that's not open today and opens
+#    up tomorrow will correctly trigger an alert.
 #
 # IMPORTANT: url_template must NOT include a real date or the ?etCodes=...
 # query params tied to one specific date - just the base buytickets URL up
@@ -24,7 +25,8 @@ watches:
   - name: "Spiderman - Allu Cinemas"
     url_template: "https://in.bookmyshow.com/movies/hyderabad/spider-man-brand-new-day/buytickets/ET00502689/{date}"
     cinema_keyword: "Allu"
-    date_range_days: 10
+    date_range_days: 2
+    start_date: "20260805"
 
 # ---- Email ----
 # Do NOT put real credentials here - they're pulled from GitHub Secrets
