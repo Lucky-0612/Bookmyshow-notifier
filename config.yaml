@@ -1,26 +1,24 @@
 # ---- What to watch ----
 # Add one entry per movie+cinema you want tracked. Each gets its own saved
-# state, so they don't interfere with each other.
+# state file, so they don't interfere with each other.
 #
 # - name: short label, used in the email subject and to name the state file
 # - url: the movie's LISTING page (not a /seat-layout/... page)
 # - cinema_keyword: substring to match a cinema's name (case-insensitive).
-#     Leave blank ("") to get notified about ANY new showtime on the page,
-#     at any cinema.
+#     Leave blank ("") to get notified about ANY new showtime on the page.
 watches:
   - name: "Spiderman - Allu Cinemas"
     url: "https://in.bookmyshow.com/movies/hyderabad/spider-man-brand-new-day/buytickets/ET00502689/20260805?etCodes=ET00502689&language=english&refEventCode=ET00502689"
-    cinema_keyword: "ALLU CINEMAS"
+    cinema_keyword: "Allu"
 
   # - name: "Jana Nayakudu - AMB Cinemas"
   #   url: "https://in.bookmyshow.com/movies/hyd/jana-nayakudu/ET00430826"
   #   cinema_keyword: "AMB"
 
-# ---- Email (Gmail) ----
-gmail_address: "bingisrivatsav@gmail.com"
-gmail_app_password: "mbkj obsx wovi mabq" # 16-char App Password, NOT your normal Gmail password
-notify_to: "bingisrivatsav@gmail.com" # where the alert should be sent (can be same as above)
-
-
-# ---- Storage ----
-# Each watch's state is saved as state_<name>.json in this folder automatically.
+# ---- Email ----
+# Do NOT put real credentials here - they're pulled from GitHub Secrets
+# (GMAIL_ADDRESS, GMAIL_APP_PASSWORD, NOTIFY_TO) at run time. These fields
+# only matter if you're running the script locally without those env vars set.
+gmail_address: ""
+gmail_app_password: ""
+notify_to: ""
