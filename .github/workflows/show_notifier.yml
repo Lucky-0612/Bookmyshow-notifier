@@ -1,0 +1,40 @@
+name: Show Notifier
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub may delay this slightly under load - that's normal.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {} # lets you manually trigger a run from the Actions tab, for testing
+
+permissions:
+  contents: write # needed so the workflow can commit updated state_*.json files back
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run show notifier
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
+        run: python show_notifier.py
+
+      - name: Commit updated state files
+        run: |
+          git config user.name "show-notifier-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state_*.json
+          git diff --cached --quiet || git commit -m "Update showtime state [skip ci]"
+          git push

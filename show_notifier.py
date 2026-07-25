@@ -189,6 +189,7 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config()
+    
     if not cfg.get("gmail_address") or not cfg.get("gmail_app_password"):
         print("config.yaml is missing gmail_address / gmail_app_password. "
               "Fill those in before running (see README).")
