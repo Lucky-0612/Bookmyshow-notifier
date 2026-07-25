@@ -18,6 +18,13 @@ Two ways to use it:
 
 This only reads public listing pages - no login, no seat-level scraping,
 nothing that touches BookMyShow's booking/session APIs.
+
+NOTE ON FETCHING: BookMyShow sits behind bot-protection (Cloudflare/Akamai)
+that runs a JavaScript challenge before it will serve the real page. A plain
+HTTP client (like `requests`) can never pass that, no matter the headers -
+it doesn't execute JS. So this script uses Playwright to drive a real
+headless Chromium browser instead, which renders the page (and the
+challenge) exactly like a normal visitor's browser would.
 """
 
 import argparse
@@ -26,45 +33,17 @@ import os
 import re
 import smtplib
 import sys
-import time
 from datetime import date, timedelta
 from email.mime.text import MIMEText
-from urllib.parse import urlparse
 
-import requests
 import yaml
 from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-# A fuller, more realistic browser header set. A bare User-Agent is one of
-# the first things bot-protection (Cloudflare/Akamai, which BookMyShow
-# uses) checks for - real browsers always send Accept, Accept-Language,
-# Accept-Encoding, sec-ch-ua, etc. alongside it.
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/avif,image/webp,*/*;q=0.8"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-User": "?1",
-    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-}
-
-# Reused across requests so cookies (incl. any Cloudflare clearance cookie)
-# persist between the warm-up request and the real one.
-_session = requests.Session()
-_session.headers.update(HEADERS)
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 def load_config(path="config.yaml"):
@@ -74,57 +53,42 @@ def load_config(path="config.yaml"):
         return yaml.safe_load(f) or {}
 
 
-def fetch_page(url, retries=3):
+def fetch_page(page, url, retries=2):
     """
-    Fetch a page like a real browser would:
-      1. Visit the site's homepage first (so cookies/session state exist
-         and the Referer on the next request is legitimate), then
-      2. Request the actual URL with that Referer set.
-    Retries with backoff on 403s, since bot-protection sometimes lets a
-    request through on a second/third try once cookies are set.
-    """
-    parsed = urlparse(url)
-    origin = f"{parsed.scheme}://{parsed.netloc}"
+    Load `url` in the given Playwright page (a real headless Chromium tab)
+    and return the fully-rendered HTML.
 
+    Retries once on failure/timeout - the JS challenge occasionally needs a
+    beat, and a second navigation after the first one's cookies are set
+    tends to sail through.
+    """
     last_error = None
     for attempt in range(1, retries + 1):
         try:
-            if attempt == 1:
-                # Warm-up request: establishes cookies and is a normal
-                # thing for a real visitor to have done already.
-                _session.get(origin, timeout=20)
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # Give the bot-protection challenge (and any client-side
+            # rendering of showtimes) a moment to finish running.
+            page.wait_for_timeout(4000)
 
-            resp = _session.get(
-                url,
-                headers={"Referer": origin + "/"},
-                timeout=20,
-            )
-            resp.raise_for_status()
-            return resp.text
-        except requests.HTTPError as e:
-            last_error = e
-            status = e.response.status_code if e.response is not None else None
-            if status == 403 and attempt < retries:
-                time.sleep(2 * attempt)  # back off and try again
-                continue
-            if status == 403:
-                break  # fall through to the RuntimeError below
-            raise
-        except requests.RequestException as e:
-            last_error = e
-            raise
+            title = (page.title() or "").lower()
+            content = page.content()
+            if "just a moment" in title or "attention required" in content.lower():
+                # Still on the Cloudflare interstitial - wait longer once,
+                # then re-check before giving up.
+                page.wait_for_timeout(5000)
+                content = page.content()
 
-    # All retries exhausted on 403
+            return content
+        except PlaywrightTimeoutError as e:
+            last_error = e
+            continue
+
     raise RuntimeError(
-        f"Still getting 403 Forbidden after {retries} tries for {url}. "
-        "This means BookMyShow's bot-protection (Cloudflare/Akamai) is "
-        "blocking plain HTTP requests outright - it can detect that this "
-        "isn't a real browser regardless of headers. A plain `requests` "
-        "script generally cannot get past this. Options: (1) run this from "
-        "a residential/home IP rather than a cloud CI runner - GitHub "
-        "Actions IPs are commonly blocked outright, or (2) switch to a "
-        "headless-browser approach (e.g. Playwright) that actually renders "
-        "the page and passes the JS challenge. See README for details."
+        f"Could not load {url} after {retries} tries (page kept timing out). "
+        "If this keeps happening, BookMyShow may be blocking this specific "
+        "IP/environment outright (common for cloud CI runners like GitHub "
+        "Actions) rather than just challenging the browser - in that case "
+        "try running this from a home connection instead."
     ) from last_error
 
 
@@ -214,14 +178,14 @@ def send_email(cfg, subject, body):
         server.sendmail(cfg["gmail_address"], [cfg["notify_to"]], msg.as_string())
 
 
-def check_one(cfg, name, url, keyword, send_email_on_new=True):
+def check_one(cfg, page, name, url, keyword, send_email_on_new=True):
     state_path = state_filename_for(name)
     print(f"\n[{name}] Checking {url} for showtimes"
           + (f" containing '{keyword}'..." if keyword else " (any cinema)..."))
 
     try:
-        html = fetch_page(url)
-    except (requests.RequestException, RuntimeError) as e:
+        html = fetch_page(page, url)
+    except RuntimeError as e:
         print(f"[{name}] Could not fetch the page: {e}")
         return
 
@@ -313,20 +277,33 @@ def main():
               "Fill those in before running (see README).")
         sys.exit(1)
 
-    if args.url:
-        # Ad-hoc single check, ignores the watches list in config.yaml
-        check_one(cfg, args.name, args.url, args.keyword)
-        return
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=USER_AGENT,
+            viewport={"width": 1366, "height": 900},
+            locale="en-IN",
+        )
+        page = context.new_page()
 
-    watches = cfg.get("watches") or []
-    if not watches:
-        print("No watches configured. Add entries under 'watches:' in config.yaml, "
-              "or run with --url to do a one-off check.")
-        return
+        try:
+            if args.url:
+                # Ad-hoc single check, ignores the watches list in config.yaml
+                check_one(cfg, page, args.name, args.url, args.keyword)
+                return
 
-    for w in watches:
-        for name, url, keyword in expand_watch(w):
-            check_one(cfg, name, url, keyword)
+            watches = cfg.get("watches") or []
+            if not watches:
+                print("No watches configured. Add entries under 'watches:' in config.yaml, "
+                      "or run with --url to do a one-off check.")
+                return
+
+            for w in watches:
+                for name, url, keyword in expand_watch(w):
+                    check_one(cfg, page, name, url, keyword)
+        finally:
+            context.close()
+            browser.close()
 
 
 if __name__ == "__main__":

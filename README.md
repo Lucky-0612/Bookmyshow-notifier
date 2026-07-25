@@ -21,7 +21,14 @@ Open a terminal (Command Prompt / PowerShell / Terminal) in that folder:
 
 ```
 pip install -r requirements.txt
+playwright install chromium
 ```
+
+The second command downloads the actual Chromium browser Playwright drives
+(it's a separate step from `pip install` - the Python package alone doesn't
+include the browser binary). BookMyShow blocks plain HTTP requests with a
+JavaScript challenge, so this script uses a real headless browser instead
+of a simple HTTP client to get past it.
 
 ## 4. Create a Gmail App Password
 
@@ -91,6 +98,18 @@ need the `watches:` list.
   0 * * * * cd /path/to/show_notifier && /usr/bin/python3 show_notifier.py
   ```
   (runs every hour)
+- **GitHub Actions**: if your workflow YAML already runs
+  `pip install -r requirements.txt`, add this step right after it (Playwright
+  needs the actual browser binary, not just the Python package):
+  ```yaml
+  - name: Install Playwright browser
+    run: python -m playwright install --with-deps chromium
+  ```
+  Note: some cloud CI providers' IP ranges are themselves blocked by sites
+  like BookMyShow regardless of the browser used. If this still fails only
+  in GitHub Actions but works fine when you run it locally, that's an IP
+  reputation block, not a browser-detection one - running via cron on a
+  home machine/NAS/Raspberry Pi would sidestep it.
 
 ## Notes / limitations
 
