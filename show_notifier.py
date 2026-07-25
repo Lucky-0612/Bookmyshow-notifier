@@ -189,6 +189,12 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config()
+
+    # Override config.yaml values with GitHub Secrets (env vars), if present
+    cfg["gmail_address"] = os.getenv("GMAIL_ADDRESS", cfg.get("gmail_address", ""))
+    cfg["gmail_app_password"] = os.getenv("GMAIL_APP_PASSWORD", cfg.get("gmail_app_password", ""))
+    cfg["notify_to"] = os.getenv("NOTIFY_TO", cfg.get("notify_to", ""))
+
     if not cfg.get("gmail_address") or not cfg.get("gmail_app_password"):
         print("config.yaml is missing gmail_address / gmail_app_password. "
               "Fill those in before running (see README).")
