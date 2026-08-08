@@ -2,7 +2,7 @@
   "Allu": {
     "10:00 AM": "FAST_FILLING",
     "01:15 PM": "FAST_FILLING",
-    "04:30 PM": "FAST_FILLING",
+    "04:30 PM": "SOLD_OUT",
     "07:45 PM": "FAST_FILLING",
     "11:00 PM": "FAST_FILLING"
   }
